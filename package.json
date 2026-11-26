@@ -2,6 +2,7 @@
   "name": "samisip",
   "private": true,
   "version": "0.1.0",
+  "license": "MIT",
   "type": "module",
   "engines": {
     "node": ">=22.5"
@@ -10,6 +11,7 @@
     "dev": "concurrently -k -n api,web -c blue,green \"npm:dev:api\" \"npm:dev:web\"",
     "dev:api": "tsx watch src/server/index.ts",
     "dev:web": "vite",
+    "mock:provider": "tsx src/server/mock-provider.ts",
     "build": "npm run build:api && npm run build:web",
     "build:api": "tsc -p tsconfig.server.json",
     "build:web": "vite build",

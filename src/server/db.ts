@@ -3,10 +3,12 @@ import { dirname } from "node:path";
 import { randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import type { Agent, ContextRun, ContextStatus, ContextSummary, Job, Message, Provider, Room, RoomSnapshot, RoomSummary, User } from "./types.js";
+import { isLoopbackUrl } from "./network.js";
 
 const now = () => new Date().toISOString();
 const slugify = (value: string) => value.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "").slice(0, 48);
 const searchTerms = (value: string) => [...new Set(value.toLowerCase().match(/[a-z0-9][a-z0-9-]{2,}/g) ?? [])].slice(0, 16);
+const agentConfigured = (agent: Agent) => agent.apiKeyEnv ? Boolean(process.env[agent.apiKeyEnv]) : isLoopbackUrl(agent.baseUrl);
 
 export class AppDatabase {
   readonly sqlite: DatabaseSync;
@@ -285,7 +287,7 @@ export class AppDatabase {
       SELECT u.* FROM users u JOIN room_members rm ON rm.user_id = u.id
       WHERE rm.room_id = ? ORDER BY rm.joined_at
     `).all(roomId) as Record<string, unknown>[]).map((row) => this.mapUser(row));
-    const agents = this.listRoomAgents(roomId).map((agent) => ({ ...agent, configured: Boolean(process.env[agent.apiKeyEnv]) }));
+    const agents = this.listRoomAgents(roomId).map((agent) => ({ ...agent, configured: agentConfigured(agent) }));
     const jobs = (this.sqlite.prepare(`
       SELECT j.*, a.username AS agent_username FROM jobs j JOIN agents a ON a.id = j.agent_id
       WHERE j.room_id = ? ORDER BY j.id DESC LIMIT 20
@@ -307,8 +309,10 @@ export class AppDatabase {
     const username = this.cleanUsername(input.username);
     if (!username.startsWith("ai-")) throw new Error("AI usernames must start with ai-.");
     const url = new URL(input.baseUrl);
-    if (!url.protocol.startsWith("http")) throw new Error("Model URL must use HTTP or HTTPS.");
-    if (!/^[A-Z][A-Z0-9_]*$/.test(input.apiKeyEnv)) throw new Error("API key environment variable is invalid.");
+    if (url.protocol !== "http:" && url.protocol !== "https:") throw new Error("Model URL must use HTTP or HTTPS.");
+    const apiKeyEnv = input.apiKeyEnv.trim();
+    if (apiKeyEnv && !/^[A-Z][A-Z0-9_]*$/.test(apiKeyEnv)) throw new Error("API key environment variable is invalid.");
+    if (!apiKeyEnv && !isLoopbackUrl(url.toString())) throw new Error("A key environment variable is required unless the model URL is local.");
     const agent: Agent = {
       id: randomUUID(),
       username,
@@ -316,7 +320,7 @@ export class AppDatabase {
       provider: input.provider,
       baseUrl: url.toString().replace(/\/$/, ""),
       model: input.model.trim(),
-      apiKeyEnv: input.apiKeyEnv,
+      apiKeyEnv,
       systemPrompt: input.systemPrompt.trim(),
       enabled: true,
       createdBy: input.createdBy,
@@ -328,7 +332,7 @@ export class AppDatabase {
     );
     const positionRow = this.sqlite.prepare("SELECT COALESCE(MAX(position), -1) + 1 AS position FROM room_agents WHERE room_id = ?").get(input.roomId) as { position: number };
     this.sqlite.prepare("INSERT INTO room_agents VALUES (?, ?, ?, ?)").run(input.roomId, agent.id, positionRow.position, now());
-    return { ...agent, position: positionRow.position, configured: Boolean(process.env[agent.apiKeyEnv]) };
+    return { ...agent, position: positionRow.position, configured: agentConfigured(agent) };
   }
 
   listRoomAgents(roomId: string): Agent[] {

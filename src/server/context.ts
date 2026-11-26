@@ -44,6 +44,16 @@ export class ContextManager {
   }
 
   build(room: Room, sourceMessageId: number, maxChars: number): ContextPlan {
+    const source = this.db.getMessage(sourceMessageId);
+    return this.buildPlan(room, `${source.content}\n${room.projectBrief}`, maxChars);
+  }
+
+  buildForSummary(room: Room, maxChars: number): ContextPlan {
+    const query = `${room.projectBrief}\ndecisions requirements constraints risks unresolved questions action items owners next steps`;
+    return this.buildPlan(room, query, maxChars);
+  }
+
+  private buildPlan(room: Room, query: string, maxChars: number): ContextPlan {
     const recentBudget = Math.max(2_000, Math.floor(maxChars * 0.55));
     const summaryBudget = Math.max(800, Math.floor(maxChars * 0.17));
     const retrievalBudget = Math.max(1_000, Math.floor(maxChars * 0.23));
@@ -52,8 +62,6 @@ export class ContextManager {
     const oldestRecentMessageId = recentMessages[0]?.id ?? null;
     if (oldestRecentMessageId !== null) this.ensureSummaries(room, oldestRecentMessageId);
 
-    const source = this.db.getMessage(sourceMessageId);
-    const query = `${source.content}\n${room.projectBrief}`;
     const retrievedMessages = oldestRecentMessageId === null
       ? []
       : this.takeMessagesWithinBudget(this.db.searchMessages(room.id, query, this.historySearchResults, oldestRecentMessageId), retrievalBudget);

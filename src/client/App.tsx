@@ -1,5 +1,5 @@
 import { type FormEvent, type KeyboardEvent, type ReactNode, useEffect, useRef, useState } from "react";
-import { api } from "./api";
+import { api, apiUrl } from "./api";
 import type { Agent, Job, Message, Room, RoomSnapshot, RoomSummary, User } from "./types";
 
 const identityKey = "samisip.identity";
@@ -117,6 +117,17 @@ function AgentModal({ roomId, user, onClose, onCreated }: { roomId: string; user
     }));
   };
   const update = (key: keyof typeof form, value: string) => setForm((current) => ({ ...current, [key]: value }));
+  const useLocalFixture = () => {
+    setProvider("openai");
+    setForm({
+      username: "ai-local",
+      displayName: "Local model",
+      baseUrl: "http://127.0.0.1:8788/v1",
+      model: "samisip-mock",
+      apiKeyEnv: "",
+      systemPrompt: "Be a concise local test collaborator."
+    });
+  };
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     setBusy(true);
@@ -131,7 +142,8 @@ function AgentModal({ roomId, user, onClose, onCreated }: { roomId: string; user
   };
   return (
     <Modal title="Add an AI collaborator" onClose={onClose}>
-      <p className="mt-2 text-sm text-muted">Use an OpenAI-compatible or Anthropic-compatible endpoint. Keys stay in the server environment.</p>
+      <p className="mt-2 text-sm text-muted">Use an OpenAI-compatible or Anthropic-compatible endpoint. Keys stay server-side; loopback endpoints can be keyless.</p>
+      <button type="button" className="text-button mt-3" onClick={useLocalFixture}>Fill local test model</button>
       <form className="mt-6 grid gap-4" onSubmit={(event) => void submit(event)}>
         <div className="grid grid-cols-2 gap-3">
           <label className="field-label">Provider<select value={provider} onChange={(event) => changeProvider(event.target.value as typeof provider)}><option value="openai">OpenAI style</option><option value="anthropic">Anthropic style</option></select></label>
@@ -141,7 +153,7 @@ function AgentModal({ roomId, user, onClose, onCreated }: { roomId: string; user
         <label className="field-label">Base URL<input required type="url" value={form.baseUrl} onChange={(event) => update("baseUrl", event.target.value)} /></label>
         <div className="grid grid-cols-2 gap-3">
           <label className="field-label">Model<input required value={form.model} onChange={(event) => update("model", event.target.value)} /></label>
-          <label className="field-label">Key environment variable<input required pattern="[A-Z][A-Z0-9_]*" value={form.apiKeyEnv} onChange={(event) => update("apiKeyEnv", event.target.value.toUpperCase())} /></label>
+          <label className="field-label">Key env (optional locally)<input pattern="[A-Z][A-Z0-9_]*" value={form.apiKeyEnv} onChange={(event) => update("apiKeyEnv", event.target.value.toUpperCase())} placeholder="Leave blank for localhost" /></label>
         </div>
         <label className="field-label">Role prompt<textarea rows={4} value={form.systemPrompt} onChange={(event) => update("systemPrompt", event.target.value)} placeholder="What perspective should this collaborator bring?" /></label>
         <div className="flex justify-end gap-2"><button type="button" className="secondary-button" onClick={onClose}>Cancel</button><button className="primary-button" disabled={busy}>{busy ? "Adding…" : "Add collaborator"}</button></div>
@@ -176,6 +188,7 @@ function Sidebar({ rooms, selectedId, user, open, onClose, onSelect, onNewRoom, 
           <span className="min-w-0 flex-1 text-left"><span className="block truncate text-sm font-medium">{user?.displayName ?? "Join"}</span><span className="block truncate text-xs text-muted">@{user?.username ?? "guest"}</span></span>
           <Icon name="chevron" size={15} />
         </button>
+        <p className="mt-3 px-2 text-[11px] text-muted">Copyright © Fernan de Dios.</p>
       </div>
     </aside>
   );
@@ -246,15 +259,36 @@ function Composer({ agents, disabled, onSend }: { agents: Agent[]; disabled: boo
   );
 }
 
-function DetailsPanel({ snapshot, onAddAgent, onSaveBrief, open, onClose }: {
-  snapshot: RoomSnapshot; onAddAgent: () => void; onSaveBrief: (brief: string) => Promise<void>; open: boolean; onClose: () => void;
+function DetailsPanel({ snapshot, onAddAgent, onSaveBrief, onDownloadSummary, open, onClose }: {
+  snapshot: RoomSnapshot; onAddAgent: () => void; onSaveBrief: (brief: string) => Promise<void>;
+  onDownloadSummary: (agentId: string) => Promise<void>; open: boolean; onClose: () => void;
 }) {
   const [brief, setBrief] = useState(snapshot.room.projectBrief);
   const [editing, setEditing] = useState(false);
+  const [summaryAgentId, setSummaryAgentId] = useState(snapshot.agents.find((agent) => agent.configured)?.id ?? "");
+  const [summaryBusy, setSummaryBusy] = useState(false);
+  const [summaryError, setSummaryError] = useState<string | null>(null);
   useEffect(() => setBrief(snapshot.room.projectBrief), [snapshot.room.projectBrief]);
+  useEffect(() => {
+    if (!snapshot.agents.some((agent) => agent.id === summaryAgentId && agent.configured)) {
+      setSummaryAgentId(snapshot.agents.find((agent) => agent.configured)?.id ?? "");
+    }
+  }, [snapshot.room.id, snapshot.agents, summaryAgentId]);
   const save = async () => {
     await onSaveBrief(brief);
     setEditing(false);
+  };
+  const downloadSummary = async () => {
+    if (!summaryAgentId) return;
+    setSummaryBusy(true);
+    setSummaryError(null);
+    try {
+      await onDownloadSummary(summaryAgentId);
+    } catch (caught) {
+      setSummaryError(caught instanceof Error ? caught.message : "The summary could not be exported.");
+    } finally {
+      setSummaryBusy(false);
+    }
   };
   return (
     <aside className={`details-panel ${open ? "details-open" : ""}`}>
@@ -291,6 +325,18 @@ function DetailsPanel({ snapshot, onAddAgent, onSaveBrief, open, onClose }: {
             <div className="key-value"><dt>Archive matches</dt><dd>{snapshot.contextStatus.lastRun.retrievedMessages}</dd></div>
           </>}
         </dl>
+      </section>
+      <section className="details-section">
+        <h3 className="text-sm font-medium">AI summary export</h3>
+        <p className="mt-2 text-sm leading-6 text-muted">Choose a ready participant to summarize the current room, then download its Markdown report.</p>
+        <label className="field-label mt-3">Summary author
+          <select value={summaryAgentId} onChange={(event) => setSummaryAgentId(event.target.value)} disabled={!snapshot.agents.some((agent) => agent.configured)}>
+            {!snapshot.agents.some((agent) => agent.configured) && <option value="">No ready AI participant</option>}
+            {snapshot.agents.map((agent) => <option key={agent.id} value={agent.id} disabled={!agent.configured}>{agent.displayName} · @{agent.username}{agent.configured ? "" : " · unavailable"}</option>)}
+          </select>
+        </label>
+        <button className="primary-button mt-3 w-full" onClick={() => void downloadSummary()} disabled={!summaryAgentId || summaryBusy}>{summaryBusy ? "Preparing Markdown…" : "Download .md summary"}</button>
+        {summaryError && <p className="summary-error" role="alert">{summaryError}</p>}
       </section>
       <section className="details-section">
         <h3 className="text-sm font-medium">Mention routing</h3>
@@ -357,7 +403,7 @@ export function App() {
     if (!roomId || !user) return;
     void api(`/api/rooms/${roomId}/join`, { method: "POST", body: JSON.stringify({ userId: user.id }) });
     void loadRoom(roomId);
-    const source = new EventSource(`/api/rooms/${roomId}/events`);
+    const source = new EventSource(apiUrl(`/api/rooms/${roomId}/events`));
     let timer: number | undefined;
     const refresh = () => {
       window.clearTimeout(timer);
@@ -397,6 +443,28 @@ export function App() {
     await api(`/api/rooms/${roomId}`, { method: "PATCH", body: JSON.stringify({ projectBrief }) });
     await loadRoom(roomId);
   };
+  const downloadSummary = async (agentId: string) => {
+    if (!roomId) return;
+    const response = await fetch(apiUrl(`/api/rooms/${roomId}/summary`), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ agentId })
+    });
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({ error: `Request failed (${response.status}).` })) as { error?: string };
+      throw new Error(data.error ?? `Request failed (${response.status}).`);
+    }
+    const disposition = response.headers.get("content-disposition") ?? "";
+    const fileName = disposition.match(/filename="([^"]+)"/)?.[1] ?? `${snapshot?.room.slug ?? "room"}-summary.md`;
+    const url = URL.createObjectURL(await response.blob());
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = fileName;
+    document.body.append(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 0);
+  };
   const switchUser = () => {
     localStorage.removeItem(identityKey);
     setIdentityOpen(true);
@@ -420,7 +488,7 @@ export function App() {
           <Composer agents={snapshot.agents} disabled={!user} onSend={send} />
         </> : <div className="empty-screen"><Logo /><p>{rooms.length === 0 ? "Start a project room to bring your collaborators together." : "Opening the room…"}</p>{rooms.length === 0 && <button className="primary-button" onClick={() => setRoomModalOpen(true)}>Create a room</button>}</div>}
       </main>
-      {snapshot && <DetailsPanel snapshot={snapshot} onAddAgent={() => setAgentModalOpen(true)} onSaveBrief={saveBrief} open={detailsOpen} onClose={() => setDetailsOpen(false)} />}
+      {snapshot && <DetailsPanel snapshot={snapshot} onAddAgent={() => setAgentModalOpen(true)} onSaveBrief={saveBrief} onDownloadSummary={downloadSummary} open={detailsOpen} onClose={() => setDetailsOpen(false)} />}
       {(mobileNav || detailsOpen) && <button className="panel-scrim" aria-label="Close panel" onClick={() => { setMobileNav(false); setDetailsOpen(false); }} />}
       {error && <div className="error-toast" role="alert">{error}<button onClick={() => setError(null)} aria-label="Dismiss"><Icon name="close" size={15} /></button></div>}
       {identityOpen && <IdentityModal onSubmit={signIn} busy={busy} />}

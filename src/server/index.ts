@@ -3,23 +3,31 @@ import express from "express";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { AppDatabase } from "./db.js";
+import { ContextManager } from "./context.js";
 import { EventHub } from "./events.js";
+import { cors } from "./network.js";
 import { ProviderClient } from "./providers.js";
 import { QueueManager } from "./queue.js";
+import { formatSummaryMarkdown, summaryFileName } from "./summary.js";
 import type { Provider } from "./types.js";
 
 const port = Number(process.env.PORT ?? 8787);
+const maxContextChars = Number(process.env.MAX_CONTEXT_CHARS ?? 48_000);
 const db = new AppDatabase(process.env.DATABASE_PATH ?? "data/samisip.sqlite");
 const events = new EventHub();
+const providers = new ProviderClient();
+const context = new ContextManager(db);
 const queue = new QueueManager(
   db,
   events,
-  new ProviderClient(),
+  providers,
   Number(process.env.MAX_AI_CHAIN_DEPTH ?? 3),
-  Number(process.env.MAX_CONTEXT_CHARS ?? 48_000)
+  maxContextChars,
+  context
 );
 const app = express();
 
+app.use(cors());
 app.use(express.json({ limit: "128kb" }));
 
 app.get("/api/health", (_request, response) => {
@@ -120,6 +128,25 @@ app.post("/api/rooms/:roomId/agents", (request, response, next) => {
     });
     events.publish({ type: "room.updated", roomId: request.params.roomId, data: agent });
     response.status(201).json(agent);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/rooms/:roomId/summary", async (request, response, next) => {
+  try {
+    const room = db.getRoom(request.params.roomId);
+    const agentId = String(request.body.agentId ?? "");
+    const agents = db.listRoomAgents(room.id);
+    const agent = agents.find((item) => item.id === agentId);
+    if (!agent?.enabled) throw new Error("Choose an enabled AI participant from this room.");
+    const plan = context.buildForSummary(room, maxContextChars);
+    const generatedAt = new Date().toISOString();
+    const body = await providers.generateSummary(agent, room, plan, agents);
+    const markdown = formatSummaryMarkdown(room, agent, body, generatedAt, plan.totalMessages);
+    response.setHeader("content-type", "text/markdown; charset=utf-8");
+    response.setHeader("content-disposition", `attachment; filename="${summaryFileName(room, generatedAt)}"`);
+    response.send(markdown);
   } catch (error) {
     next(error);
   }

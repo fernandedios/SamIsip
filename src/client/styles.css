@@ -78,6 +78,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .key-value { display: flex; align-items: center; justify-content: space-between; gap: 12px; color: var(--muted); }
 .key-value dd { margin: 0; color: var(--text); font-variant-numeric: tabular-nums; }
 .brief-editor { width: 100%; resize: vertical; border: 1px solid var(--control); border-radius: var(--radius-control); padding: 10px; color: var(--text); background: #fff; font-size: 13px; line-height: 1.5; }
+.summary-error { margin: 10px 0 0; color: #831c1e; font-size: 12px; line-height: 1.45; }
 
 .primary-button, .secondary-button { display: inline-flex; min-height: 36px; align-items: center; justify-content: center; gap: 8px; border-radius: var(--radius-control); padding: 7px 13px; font-size: 13px; font-weight: 500; }
 .primary-button { border: 1px solid #171717; color: #fff; background: #171717; }
