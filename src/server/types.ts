@@ -60,6 +60,46 @@ export interface Job {
   completedAt: string | null;
 }
 
+export interface ContextSummary {
+  id: number;
+  roomId: string;
+  startMessageId: number;
+  endMessageId: number;
+  messageCount: number;
+  summary: string;
+  createdAt: string;
+}
+
+export interface ContextRun {
+  id: number;
+  jobId: number;
+  roomId: string;
+  totalMessages: number;
+  recentMessages: number;
+  retrievedMessages: number;
+  summaryChunks: number;
+  includedChars: number;
+  archiveSearches: number;
+  createdAt: string;
+}
+
+export interface ContextStatus {
+  fullMessageCount: number;
+  fullMessageChars: number;
+  summaryChunkCount: number;
+  summarizedMessageCount: number;
+  lastRun: ContextRun | null;
+}
+
+export interface ContextPlan {
+  totalMessages: number;
+  recentMessages: Message[];
+  retrievedMessages: Message[];
+  summaries: ContextSummary[];
+  includedChars: number;
+  oldestRecentMessageId: number | null;
+}
+
 export interface RoomSummary {
   room: Room;
   lastMessage: string | null;
@@ -74,4 +114,5 @@ export interface RoomSnapshot {
   members: User[];
   agents: Agent[];
   jobs: Job[];
+  contextStatus: ContextStatus;
 }

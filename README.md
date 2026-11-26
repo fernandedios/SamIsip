@@ -2,6 +2,8 @@
 
 SamIsip is a persistent collaboration room for humans and configurable AI models. Mention `@ai-sol`, another configured agent username, or `@all-ai` to enqueue AI turns in the room.
 
+Long rooms use layered context memory: recent turns stay verbatim, older turns become auditable extractive digests, and relevant exact messages are retrieved from the complete FTS5-indexed transcript. A model can request one bounded full-history search when it needs an exact earlier detail.
+
 ## Start locally
 
 ```bash

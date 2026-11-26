@@ -2,10 +2,11 @@ import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
-import type { Agent, Job, Message, Provider, Room, RoomSnapshot, RoomSummary, User } from "./types.js";
+import type { Agent, ContextRun, ContextStatus, ContextSummary, Job, Message, Provider, Room, RoomSnapshot, RoomSummary, User } from "./types.js";
 
 const now = () => new Date().toISOString();
 const slugify = (value: string) => value.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "").slice(0, 48);
+const searchTerms = (value: string) => [...new Set(value.toLowerCase().match(/[a-z0-9][a-z0-9-]{2,}/g) ?? [])].slice(0, 16);
 
 export class AppDatabase {
   readonly sqlite: DatabaseSync;
@@ -15,6 +16,7 @@ export class AppDatabase {
     this.sqlite = new DatabaseSync(path);
     this.sqlite.exec("PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000;");
     this.migrate();
+    this.initializeSearchIndex();
     this.seed();
   }
 
@@ -91,7 +93,63 @@ export class AppDatabase {
         UNIQUE(source_message_id, agent_id)
       );
       CREATE INDEX IF NOT EXISTS jobs_room_status_id ON jobs(room_id, status, id);
+      CREATE TABLE IF NOT EXISTS context_summaries (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        room_id TEXT NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+        start_message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+        end_message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+        message_count INTEGER NOT NULL,
+        summary TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        UNIQUE(room_id, start_message_id, end_message_id)
+      );
+      CREATE INDEX IF NOT EXISTS context_summaries_room_end ON context_summaries(room_id, end_message_id);
+      CREATE TABLE IF NOT EXISTS context_runs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        job_id INTEGER NOT NULL UNIQUE REFERENCES jobs(id) ON DELETE CASCADE,
+        room_id TEXT NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+        total_messages INTEGER NOT NULL,
+        recent_messages INTEGER NOT NULL,
+        retrieved_messages INTEGER NOT NULL,
+        summary_chunks INTEGER NOT NULL,
+        included_chars INTEGER NOT NULL,
+        archive_searches INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS context_runs_room_id ON context_runs(room_id, id DESC);
+      CREATE TABLE IF NOT EXISTS app_meta (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+      );
+      CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
+        content,
+        author_username,
+        room_id UNINDEXED,
+        content = 'messages',
+        content_rowid = 'id'
+      );
+      CREATE TRIGGER IF NOT EXISTS messages_fts_insert AFTER INSERT ON messages BEGIN
+        INSERT INTO messages_fts(rowid, content, author_username, room_id)
+        VALUES (new.id, new.content, new.author_username, new.room_id);
+      END;
+      CREATE TRIGGER IF NOT EXISTS messages_fts_delete AFTER DELETE ON messages BEGIN
+        INSERT INTO messages_fts(messages_fts, rowid, content, author_username, room_id)
+        VALUES ('delete', old.id, old.content, old.author_username, old.room_id);
+      END;
+      CREATE TRIGGER IF NOT EXISTS messages_fts_update AFTER UPDATE ON messages BEGIN
+        INSERT INTO messages_fts(messages_fts, rowid, content, author_username, room_id)
+        VALUES ('delete', old.id, old.content, old.author_username, old.room_id);
+        INSERT INTO messages_fts(rowid, content, author_username, room_id)
+        VALUES (new.id, new.content, new.author_username, new.room_id);
+      END;
     `);
+  }
+
+  private initializeSearchIndex(): void {
+    const initialized = this.sqlite.prepare("SELECT value FROM app_meta WHERE key = 'messages_fts_initialized'").get();
+    if (initialized) return;
+    this.sqlite.prepare("INSERT INTO messages_fts(messages_fts) VALUES ('rebuild')").run();
+    this.sqlite.prepare("INSERT INTO app_meta(key, value) VALUES ('messages_fts_initialized', ?)").run(now());
   }
 
   private seed(): void {
@@ -232,7 +290,7 @@ export class AppDatabase {
       SELECT j.*, a.username AS agent_username FROM jobs j JOIN agents a ON a.id = j.agent_id
       WHERE j.room_id = ? ORDER BY j.id DESC LIMIT 20
     `).all(roomId) as Record<string, unknown>[]).map((row) => this.mapJob(row));
-    return { room: this.getRoom(roomId), messages, members, agents, jobs };
+    return { room: this.getRoom(roomId), messages, members, agents, jobs, contextStatus: this.getContextStatus(roomId) };
   }
 
   addAgent(input: {
@@ -302,18 +360,111 @@ export class AppDatabase {
     return this.mapMessage(row);
   }
 
-  listContextMessages(roomId: string, maxChars: number): Message[] {
-    const rows = this.sqlite.prepare("SELECT * FROM messages WHERE room_id = ? ORDER BY id DESC LIMIT 400").all(roomId) as Record<string, unknown>[];
-    const selected: Message[] = [];
-    let used = 0;
-    for (const row of rows) {
-      const message = this.mapMessage(row);
-      const cost = message.content.length + message.authorUsername.length + 8;
-      if (selected.length > 0 && used + cost > maxChars) break;
-      selected.push(message);
-      used += cost;
+  countMessages(roomId: string): number {
+    const row = this.sqlite.prepare("SELECT COUNT(*) AS count FROM messages WHERE room_id = ?").get(roomId) as { count: number };
+    return Number(row.count);
+  }
+
+  listRecentMessages(roomId: string, limit: number): Message[] {
+    return (this.sqlite.prepare("SELECT * FROM messages WHERE room_id = ? ORDER BY id DESC LIMIT ?").all(roomId, limit) as Record<string, unknown>[])
+      .reverse().map((row) => this.mapMessage(row));
+  }
+
+  listMessagesForSummary(roomId: string, afterId: number, beforeId: number, limit: number): Message[] {
+    return (this.sqlite.prepare(`
+      SELECT * FROM messages WHERE room_id = ? AND id > ? AND id < ? ORDER BY id LIMIT ?
+    `).all(roomId, afterId, beforeId, limit) as Record<string, unknown>[]).map((row) => this.mapMessage(row));
+  }
+
+  getLatestSummaryEndMessageId(roomId: string): number {
+    const row = this.sqlite.prepare("SELECT COALESCE(MAX(end_message_id), 0) AS id FROM context_summaries WHERE room_id = ?").get(roomId) as { id: number };
+    return Number(row.id);
+  }
+
+  insertContextSummary(roomId: string, startMessageId: number, endMessageId: number, messageCount: number, summary: string): ContextSummary {
+    const createdAt = now();
+    const result = this.sqlite.prepare(`
+      INSERT OR IGNORE INTO context_summaries (room_id, start_message_id, end_message_id, message_count, summary, created_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(roomId, startMessageId, endMessageId, messageCount, summary, createdAt);
+    const id = result.changes === 0
+      ? (this.sqlite.prepare("SELECT id FROM context_summaries WHERE room_id = ? AND start_message_id = ? AND end_message_id = ?").get(roomId, startMessageId, endMessageId) as { id: number }).id
+      : Number(result.lastInsertRowid);
+    const row = this.sqlite.prepare("SELECT * FROM context_summaries WHERE id = ?").get(id) as Record<string, unknown>;
+    return this.mapContextSummary(row);
+  }
+
+  listContextSummaries(roomId: string): ContextSummary[] {
+    return (this.sqlite.prepare("SELECT * FROM context_summaries WHERE room_id = ? ORDER BY start_message_id").all(roomId) as Record<string, unknown>[])
+      .map((row) => this.mapContextSummary(row));
+  }
+
+  searchMessages(roomId: string, query: string, limit: number, beforeMessageId: number): Message[] {
+    const terms = searchTerms(query);
+    if (terms.length === 0) return [];
+    const ftsQuery = terms.map((term) => `"${term.replaceAll('"', '""')}"`).join(" OR ");
+    try {
+      const rows = this.sqlite.prepare(`
+        SELECT m.* FROM messages_fts
+        JOIN messages m ON m.id = messages_fts.rowid
+        WHERE messages_fts MATCH ? AND m.room_id = ? AND m.id < ?
+        ORDER BY bm25(messages_fts), m.id DESC LIMIT ?
+      `).all(ftsQuery, roomId, beforeMessageId, limit) as Record<string, unknown>[];
+      return rows.map((row) => this.mapMessage(row));
+    } catch {
+      const rows = this.sqlite.prepare("SELECT * FROM messages WHERE room_id = ? AND id < ? ORDER BY id DESC").all(roomId, beforeMessageId) as Record<string, unknown>[];
+      return rows.map((row) => this.mapMessage(row)).map((message) => ({
+        message,
+        score: terms.reduce((score, term) => score + (message.content.toLowerCase().includes(term) ? 1 : 0), 0)
+      })).filter((item) => item.score > 0).sort((a, b) => b.score - a.score || b.message.id - a.message.id).slice(0, limit).map((item) => item.message);
     }
-    return selected.reverse();
+  }
+
+  recordContextRun(jobId: number, roomId: string, input: {
+    totalMessages: number;
+    recentMessages: number;
+    retrievedMessages: number;
+    summaryChunks: number;
+    includedChars: number;
+    archiveSearches: number;
+  }): ContextRun {
+    const createdAt = now();
+    this.sqlite.prepare(`
+      INSERT INTO context_runs (
+        job_id, room_id, total_messages, recent_messages, retrieved_messages, summary_chunks,
+        included_chars, archive_searches, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(job_id) DO UPDATE SET
+        total_messages = excluded.total_messages,
+        recent_messages = excluded.recent_messages,
+        retrieved_messages = excluded.retrieved_messages,
+        summary_chunks = excluded.summary_chunks,
+        included_chars = excluded.included_chars,
+        archive_searches = excluded.archive_searches,
+        created_at = excluded.created_at
+    `).run(
+      jobId, roomId, input.totalMessages, input.recentMessages, input.retrievedMessages,
+      input.summaryChunks, input.includedChars, input.archiveSearches, createdAt
+    );
+    const row = this.sqlite.prepare("SELECT * FROM context_runs WHERE job_id = ?").get(jobId) as Record<string, unknown>;
+    return this.mapContextRun(row);
+  }
+
+  getContextStatus(roomId: string): ContextStatus {
+    const messages = this.sqlite.prepare(`
+      SELECT COUNT(*) AS count, COALESCE(SUM(LENGTH(content)), 0) AS chars FROM messages WHERE room_id = ?
+    `).get(roomId) as { count: number; chars: number };
+    const summaries = this.sqlite.prepare(`
+      SELECT COUNT(*) AS count, COALESCE(SUM(message_count), 0) AS messages FROM context_summaries WHERE room_id = ?
+    `).get(roomId) as { count: number; messages: number };
+    const lastRunRow = this.sqlite.prepare("SELECT * FROM context_runs WHERE room_id = ? ORDER BY id DESC LIMIT 1").get(roomId) as Record<string, unknown> | undefined;
+    return {
+      fullMessageCount: Number(messages.count),
+      fullMessageChars: Number(messages.chars),
+      summaryChunkCount: Number(summaries.count),
+      summarizedMessageCount: Number(summaries.messages),
+      lastRun: lastRunRow ? this.mapContextRun(lastRunRow) : null
+    };
   }
 
   enqueueJob(roomId: string, sourceMessageId: number, agentId: string, depth: number): Job | null {
@@ -408,5 +559,22 @@ export class AppDatabase {
       startedAt: row.started_at === null ? null : String(row.started_at), completedAt: row.completed_at === null ? null : String(row.completed_at)
     };
     return row.agent_username === undefined ? job : { ...job, agentUsername: String(row.agent_username) };
+  }
+
+  private mapContextSummary(row: Record<string, unknown>): ContextSummary {
+    return {
+      id: Number(row.id), roomId: String(row.room_id), startMessageId: Number(row.start_message_id),
+      endMessageId: Number(row.end_message_id), messageCount: Number(row.message_count),
+      summary: String(row.summary), createdAt: String(row.created_at)
+    };
+  }
+
+  private mapContextRun(row: Record<string, unknown>): ContextRun {
+    return {
+      id: Number(row.id), jobId: Number(row.job_id), roomId: String(row.room_id), totalMessages: Number(row.total_messages),
+      recentMessages: Number(row.recent_messages), retrievedMessages: Number(row.retrieved_messages),
+      summaryChunks: Number(row.summary_chunks), includedChars: Number(row.included_chars),
+      archiveSearches: Number(row.archive_searches), createdAt: String(row.created_at)
+    };
   }
 }

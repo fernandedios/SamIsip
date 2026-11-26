@@ -280,6 +280,19 @@ function DetailsPanel({ snapshot, onAddAgent, onSaveBrief, open, onClose }: {
         <div className="mt-3 grid gap-2">{snapshot.members.map((member) => <div className="collaborator-row" key={member.id}><span className="avatar avatar-human">{initials(member.displayName)}</span><span><span className="block text-sm font-medium">{member.displayName}</span><span className="block text-xs text-muted">@{member.username}</span></span></div>)}</div>
       </section>
       <section className="details-section">
+        <h3 className="text-sm font-medium">Context memory</h3>
+        <p className="mt-2 text-sm leading-6 text-muted">The full transcript stays searchable. Recent turns remain verbatim while older history becomes cited digests and relevant excerpts.</p>
+        <dl className="mt-3 grid gap-2 text-sm">
+          <div className="key-value"><dt>Full log</dt><dd>{snapshot.contextStatus.fullMessageCount} messages</dd></div>
+          <div className="key-value"><dt>Digest coverage</dt><dd>{snapshot.contextStatus.summarizedMessageCount} messages</dd></div>
+          <div className="key-value"><dt>Digest chunks</dt><dd>{snapshot.contextStatus.summaryChunkCount}</dd></div>
+          {snapshot.contextStatus.lastRun && <>
+            <div className="key-value"><dt>Recent in last turn</dt><dd>{snapshot.contextStatus.lastRun.recentMessages}</dd></div>
+            <div className="key-value"><dt>Archive matches</dt><dd>{snapshot.contextStatus.lastRun.retrievedMessages}</dd></div>
+          </>}
+        </dl>
+      </section>
+      <section className="details-section">
         <h3 className="text-sm font-medium">Mention routing</h3>
         <dl className="mt-3 grid gap-2 text-sm"><div className="key-value"><dt>Named model</dt><dd>@ai-name</dd></div><div className="key-value"><dt>Every model</dt><dd>@all-ai</dd></div><div className="key-value"><dt>Max handoff depth</dt><dd>3 turns</dd></div></dl>
       </section>

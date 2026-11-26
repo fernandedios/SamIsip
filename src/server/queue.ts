@@ -1,4 +1,5 @@
 import type { AppDatabase } from "./db.js";
+import { ContextManager, parseHistorySearch } from "./context.js";
 import type { EventHub } from "./events.js";
 import type { ProviderClient } from "./providers.js";
 import type { Message } from "./types.js";
@@ -20,7 +21,8 @@ export class QueueManager {
     private readonly events: EventHub,
     private readonly providers: ProviderClient,
     private readonly maxDepth: number,
-    private readonly maxContextChars: number
+    private readonly maxContextChars: number,
+    private readonly context: ContextManager = new ContextManager(db)
   ) {}
 
   resume(): void {
@@ -58,8 +60,18 @@ export class QueueManager {
         try {
           const agent = this.db.getAgent(job.agentId);
           const room = this.db.getRoom(roomId);
-          const history = this.db.listContextMessages(roomId, this.maxContextChars);
-          const response = await this.providers.generate(agent, room, history, this.db.listRoomAgents(roomId));
+          const collaborators = this.db.listRoomAgents(roomId);
+          const plan = this.context.build(room, job.sourceMessageId, this.maxContextChars);
+          this.recordContext(job.id, roomId, plan, 0, 0);
+          let response = await this.providers.generate(agent, room, plan, collaborators);
+          const historyQuery = parseHistorySearch(response);
+          if (historyQuery) {
+            const includedIds = new Set([...plan.recentMessages, ...plan.retrievedMessages].map((message) => message.id));
+            const results = this.context.searchFullHistory(roomId, historyQuery, includedIds);
+            const extraChars = results.reduce((total, message) => total + message.content.length + message.authorUsername.length + 20, 0);
+            this.recordContext(job.id, roomId, plan, 1, results.length, extraChars);
+            response = await this.providers.generate(agent, room, plan, collaborators, { query: historyQuery, results });
+          }
           const message = this.db.insertMessage({
             roomId,
             authorType: "agent",
@@ -81,5 +93,16 @@ export class QueueManager {
       this.activeRooms.delete(roomId);
       if (this.db.listQueuedRooms().includes(roomId)) this.kick(roomId);
     }
+  }
+
+  private recordContext(jobId: number, roomId: string, plan: ReturnType<ContextManager["build"]>, archiveSearches: number, extraRetrieved: number, extraChars = 0): void {
+    this.db.recordContextRun(jobId, roomId, {
+      totalMessages: plan.totalMessages,
+      recentMessages: plan.recentMessages.length,
+      retrievedMessages: plan.retrievedMessages.length + extraRetrieved,
+      summaryChunks: plan.summaries.length,
+      includedChars: plan.includedChars + extraChars,
+      archiveSearches
+    });
   }
 }

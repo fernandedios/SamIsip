@@ -64,10 +64,28 @@ export interface RoomSummary {
   agentCount: number;
 }
 
+export interface ContextRun {
+  jobId: number;
+  recentMessages: number;
+  summaryChunks: number;
+  retrievedMessages: number;
+  archiveSearches: number;
+  estimatedChars: number;
+  createdAt: string;
+}
+
+export interface ContextStatus {
+  fullMessageCount: number;
+  summarizedMessageCount: number;
+  summaryChunkCount: number;
+  lastRun: ContextRun | null;
+}
+
 export interface RoomSnapshot {
   room: Room;
   messages: Message[];
   members: User[];
   agents: Agent[];
   jobs: Job[];
+  contextStatus: ContextStatus;
 }

@@ -22,17 +22,3 @@ test("jobs are deduplicated and claimed in FIFO order", () => {
   assert.equal(db.claimNextJob("room-studio")?.agentId, agents[1]!.id);
   db.close();
 });
-
-test("context keeps the newest messages within its character budget", () => {
-  const db = new AppDatabase(":memory:");
-  for (const content of ["one-one", "two-two", "three-three"]) {
-    db.insertMessage({
-      roomId: "room-studio", authorType: "human", authorId: "user-sam", authorUsername: "sam",
-      content, parentMessageId: null, aiDepth: 0
-    });
-  }
-  const context = db.listContextMessages("room-studio", 38);
-  assert.equal(context.at(-1)?.content, "three-three");
-  assert.ok(context.length >= 1 && context.length < 4);
-  db.close();
-});
