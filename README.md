@@ -13,7 +13,7 @@ Rooms can export an AI-written Markdown summary at any time. The user chooses wh
 - Server-Sent Events that refresh the active room without making realtime delivery authoritative.
 - Intelligent context memory: recent verbatim turns, cited extractive digests, FTS5 retrieval, and one bounded model-requested archive search.
 - AI discussion-summary export to Markdown with a selectable room participant.
-- Keyless loopback support for local models and configurable CORS for split-origin local development.
+- Keyless loopback and private LAN support for local models, plus configurable CORS for split-origin development.
 - A built-in mock provider for testing chat and summary downloads without a cloud account.
 
 ## Stack
@@ -59,7 +59,7 @@ The downloaded fixture is a real Markdown response passing through the same serv
 
 Provider calls originate from Express, not the browser. This server-side proxy removes the usual browser-to-local-model CORS problem and keeps credentials out of client code.
 
-Add the local model as an **OpenAI style** participant and leave **Key env** blank when the base URL is loopback-only. SamIsip permits keyless endpoints only on `localhost`, `127.0.0.1`, or `::1`; non-local URLs still require a valid environment-variable reference.
+Add the local model as an **OpenAI style** participant. **Key env** may be blank for loopback URLs and direct private LAN addresses in `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, or IPv6 unique-local `fc00::/7`. Public URLs still require a valid environment-variable reference.
 
 Common OpenAI-compatible examples:
 
@@ -67,9 +67,10 @@ Common OpenAI-compatible examples:
 | --- | --- | --- |
 | [Ollama](https://docs.ollama.com/api/openai-compatibility) | `http://localhost:11434/v1` | Use a locally available Ollama model name. |
 | [LM Studio](https://lmstudio.ai/docs/developer/openai-compat) | `http://localhost:1234/v1` | Start the local server and use the loaded model identifier. |
+| LAN model host | `http://192.168.1.42:11434/v1` | Replace the address and port with the model computer's private LAN endpoint. |
 | SamIsip fixture | `http://127.0.0.1:8788/v1` | Use model `samisip-mock`; no download required. |
 
-If the model runtime requires a token, put it in `.env` under an uppercase name such as `LOCAL_LLM_API_KEY` and enter that name in the model form.
+For a model on another computer, configure the runtime to listen on its LAN interface and allow the port through that computer's firewall. Provider calls originate from Express, so the runtime does not need browser CORS permission. If the runtime requires a token, put it in `.env` under an uppercase name such as `LOCAL_LLM_API_KEY` and enter that name in the model form.
 
 ## Export a room summary
 
@@ -102,10 +103,10 @@ The normal Vite workflow proxies `/api` to Express and needs no browser CORS con
 
 ```dotenv
 VITE_API_URL=http://127.0.0.1:8787
-CORS_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
+CORS_ORIGINS=http://localhost:5173,http://127.0.0.1:5173,private-network
 ```
 
-`CORS_ORIGINS` is a comma-separated allowlist. Preflight responses include the methods and headers used by SamIsip, expose `Content-Disposition` for summary filenames, and support browser private-network preflight. `*` is supported for disposable local experiments but should not be used for a shared deployment.
+`CORS_ORIGINS` is a comma-separated allowlist. The `private-network` token accepts browser origins using loopback, RFC 1918 IPv4, or IPv6 unique-local addresses. This fixes split-origin access from another trusted LAN computer without opening access to public origins. Remove the token when LAN browser access is not required. Preflight responses include the methods and headers used by SamIsip, expose `Content-Disposition` for summary filenames, and acknowledge browser private-network requests. `*` is supported for disposable local experiments but should not be used for a shared deployment.
 
 This API CORS layer is separate from local-model compatibility: model calls are already server-to-server and therefore are not subject to browser CORS enforcement.
 
@@ -117,7 +118,7 @@ This API CORS layer is separate from local-model compatibility: model calls are 
 | `MOCK_PROVIDER_PORT` | `8788` | Built-in local fixture port |
 | `DATABASE_PATH` | `data/samisip.sqlite` | SQLite database path |
 | `VITE_API_URL` | empty | Optional absolute API origin for the browser |
-| `CORS_ORIGINS` | local Vite origins | Comma-separated browser-origin allowlist |
+| `CORS_ORIGINS` | local Vite origins plus `private-network` | Comma-separated browser-origin rules |
 | `OPENAI_API_KEY` | empty | Example OpenAI credential |
 | `ANTHROPIC_API_KEY` | empty | Example Anthropic credential |
 | `MAX_AI_CHAIN_DEPTH` | `3` | Maximum AI-to-AI handoff depth |
@@ -129,17 +130,17 @@ This API CORS layer is separate from local-model compatibility: model calls are 
 
 ## Scripts
 
-- `npm run dev` — run React and Express with live reload.
-- `npm run dev:api` — run only the API watcher.
-- `npm run dev:web` — run only Vite.
-- `npm run mock:provider` — run the keyless local provider fixture.
-- `npm run build` — type-check and build the production API and client.
-- `npm test` — run orchestration, context, export, local-endpoint, and CORS tests.
-- `npm start` — serve the built API and React client.
+- `npm run dev`: run React and Express with live reload.
+- `npm run dev:api`: run only the API watcher.
+- `npm run dev:web`: run only Vite.
+- `npm run mock:provider`: run the keyless local provider fixture.
+- `npm run build`: type-check and build the production API and client.
+- `npm test`: run orchestration, context, export, local-endpoint, and CORS tests.
+- `npm start`: serve the built API and React client.
 
 ## Current boundaries
 
-SamIsip is a local-first MVP, not yet a production multi-tenant service. It does not currently provide authentication, room-level authorization, encrypted managed secrets, distributed workers, provider usage budgets, or endpoint allowlists. Do not expose the server or a permissive `CORS_ORIGINS=*` configuration to an untrusted network.
+SamIsip is a local-first MVP, not yet a production multi-tenant service. It does not currently provide authentication, room-level authorization, encrypted managed secrets, distributed workers, provider usage budgets, or endpoint allowlists. The `private-network` CORS rule trusts browsers on private address ranges, but CORS is not authentication. Do not expose the server, `private-network`, or `CORS_ORIGINS=*` to an untrusted network.
 
 The extensive product, UX, architecture, data, provider, queue, security, testing, context-memory, export, and local-model documentation lives in the sibling `SamIsip Notes` folder.
 

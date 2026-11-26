@@ -3,12 +3,12 @@ import { dirname } from "node:path";
 import { randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import type { Agent, ContextRun, ContextStatus, ContextSummary, Job, Message, Provider, Room, RoomSnapshot, RoomSummary, User } from "./types.js";
-import { isLoopbackUrl } from "./network.js";
+import { isPrivateNetworkUrl } from "./network.js";
 
 const now = () => new Date().toISOString();
 const slugify = (value: string) => value.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "").slice(0, 48);
 const searchTerms = (value: string) => [...new Set(value.toLowerCase().match(/[a-z0-9][a-z0-9-]{2,}/g) ?? [])].slice(0, 16);
-const agentConfigured = (agent: Agent) => agent.apiKeyEnv ? Boolean(process.env[agent.apiKeyEnv]) : isLoopbackUrl(agent.baseUrl);
+const agentConfigured = (agent: Agent) => agent.apiKeyEnv ? Boolean(process.env[agent.apiKeyEnv]) : isPrivateNetworkUrl(agent.baseUrl);
 
 export class AppDatabase {
   readonly sqlite: DatabaseSync;
@@ -312,7 +312,7 @@ export class AppDatabase {
     if (url.protocol !== "http:" && url.protocol !== "https:") throw new Error("Model URL must use HTTP or HTTPS.");
     const apiKeyEnv = input.apiKeyEnv.trim();
     if (apiKeyEnv && !/^[A-Z][A-Z0-9_]*$/.test(apiKeyEnv)) throw new Error("API key environment variable is invalid.");
-    if (!apiKeyEnv && !isLoopbackUrl(url.toString())) throw new Error("A key environment variable is required unless the model URL is local.");
+    if (!apiKeyEnv && !isPrivateNetworkUrl(url.toString())) throw new Error("A key environment variable is required unless the model URL uses loopback or a private LAN address.");
     const agent: Agent = {
       id: randomUUID(),
       username,

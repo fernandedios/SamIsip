@@ -142,7 +142,7 @@ function AgentModal({ roomId, user, onClose, onCreated }: { roomId: string; user
   };
   return (
     <Modal title="Add an AI collaborator" onClose={onClose}>
-      <p className="mt-2 text-sm text-muted">Use an OpenAI-compatible or Anthropic-compatible endpoint. Keys stay server-side; loopback endpoints can be keyless.</p>
+      <p className="mt-2 text-sm text-muted">Use an OpenAI-compatible or Anthropic-compatible endpoint. Keys stay server-side; loopback and private LAN endpoints can be keyless.</p>
       <button type="button" className="text-button mt-3" onClick={useLocalFixture}>Fill local test model</button>
       <form className="mt-6 grid gap-4" onSubmit={(event) => void submit(event)}>
         <div className="grid grid-cols-2 gap-3">
@@ -153,7 +153,7 @@ function AgentModal({ roomId, user, onClose, onCreated }: { roomId: string; user
         <label className="field-label">Base URL<input required type="url" value={form.baseUrl} onChange={(event) => update("baseUrl", event.target.value)} /></label>
         <div className="grid grid-cols-2 gap-3">
           <label className="field-label">Model<input required value={form.model} onChange={(event) => update("model", event.target.value)} /></label>
-          <label className="field-label">Key env (optional locally)<input pattern="[A-Z][A-Z0-9_]*" value={form.apiKeyEnv} onChange={(event) => update("apiKeyEnv", event.target.value.toUpperCase())} placeholder="Leave blank for localhost" /></label>
+          <label className="field-label">Key env (optional locally)<input pattern="[A-Z][A-Z0-9_]*" value={form.apiKeyEnv} onChange={(event) => update("apiKeyEnv", event.target.value.toUpperCase())} placeholder="Leave blank for local or LAN" /></label>
         </div>
         <label className="field-label">Role prompt<textarea rows={4} value={form.systemPrompt} onChange={(event) => update("systemPrompt", event.target.value)} placeholder="What perspective should this collaborator bring?" /></label>
         <div className="flex justify-end gap-2"><button type="button" className="secondary-button" onClick={onClose}>Cancel</button><button className="primary-button" disabled={busy}>{busy ? "Adding…" : "Add collaborator"}</button></div>

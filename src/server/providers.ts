@@ -1,5 +1,5 @@
 import type { Agent, ContextPlan, Message, Room } from "./types.js";
-import { isLoopbackUrl } from "./network.js";
+import { isPrivateNetworkUrl } from "./network.js";
 
 interface OpenAIResponse {
   choices?: Array<{ message?: { content?: string | Array<{ type?: string; text?: string }> } }>;
@@ -117,7 +117,7 @@ export class ProviderClient {
 
   private resolveKey(agent: Agent): string | undefined {
     if (!agent.apiKeyEnv) {
-      if (!isLoopbackUrl(agent.baseUrl)) throw new Error("An API key environment variable is required for non-local model URLs.");
+      if (!isPrivateNetworkUrl(agent.baseUrl)) throw new Error("An API key environment variable is required for model URLs outside loopback and private LAN ranges.");
       return undefined;
     }
     const key = process.env[agent.apiKeyEnv];
