@@ -16,7 +16,7 @@
     "build:api": "tsc -p tsconfig.server.json",
     "build:web": "vite build",
     "start": "node dist-server/index.js",
-    "test": "node --import tsx --test src/server/*.test.ts"
+    "test": "node --import tsx --test test/*.test.ts"
   },
   "dependencies": {
     "express": "^5.1.0",

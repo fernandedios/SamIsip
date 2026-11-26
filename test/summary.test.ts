@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { AppDatabase } from "./db.js";
-import { isCorsOriginAllowed, isLoopbackUrl } from "./network.js";
-import { formatSummaryMarkdown, summaryFileName } from "./summary.js";
-import type { Agent, Room } from "./types.js";
+import { AppDatabase } from "../src/server/db.js";
+import { isCorsOriginAllowed, isLoopbackUrl } from "../src/server/network.js";
+import { formatSummaryMarkdown, summaryFileName } from "../src/server/summary.js";
+import type { Agent, Room } from "../src/server/types.js";
 
 const room: Room = {
   id: "room-test",

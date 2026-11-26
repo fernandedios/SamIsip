@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { AppDatabase } from "./db.js";
-import { parseMentions } from "./queue.js";
+import { AppDatabase } from "../src/server/db.js";
+import { parseMentions } from "../src/server/queue.js";
 
 test("parseMentions normalizes names and ignores email addresses", () => {
   assert.deepEqual([...parseMentions("Ask @AI-Sol and @all-ai; email a@b.com")], ["ai-sol", "all-ai"]);

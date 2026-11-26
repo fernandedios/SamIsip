@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { ContextManager, parseHistorySearch } from "./context.js";
-import { AppDatabase } from "./db.js";
+import { ContextManager, parseHistorySearch } from "../src/server/context.js";
+import { AppDatabase } from "../src/server/db.js";
 
 test("parseHistorySearch accepts only a standalone bounded directive", () => {
   assert.equal(parseHistorySearch("[[search-history: orchid cache decision]]"), "orchid cache decision");
