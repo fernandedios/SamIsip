@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { AppDatabase } from "../src/server/db.js";
-import { isCorsOriginAllowed, isLoopbackUrl, isPrivateNetworkUrl } from "../src/server/network.js";
+import { isCorsOriginAllowed, isKeylessModelUrlAllowed, isLoopbackUrl, isPrivateNetworkUrl } from "../src/server/network.js";
 import { formatSummaryMarkdown, summaryFileName } from "../src/server/summary.js";
 import type { Agent, Room } from "../src/server/types.js";
 
@@ -37,7 +37,7 @@ test("summary export wraps clean model Markdown with provenance", () => {
   assert.equal(summaryFileName(room, "2026-11-26T09:15:00.000Z"), "launch-room-summary-2026-11-26-0915.md");
 });
 
-test("loopback and private LAN endpoints can be keyless while public endpoints require a key reference", () => {
+test("loopback, private LAN, and allowlisted tunnel endpoints can be keyless", () => {
   assert.equal(isLoopbackUrl("http://127.0.0.1:11434/v1"), true);
   assert.equal(isLoopbackUrl("http://localhost:1234/v1"), true);
   assert.equal(isLoopbackUrl("https://models.example.com/v1"), false);
@@ -47,6 +47,10 @@ test("loopback and private LAN endpoints can be keyless while public endpoints r
   assert.equal(isPrivateNetworkUrl("http://[fd12:3456::42]:11434/v1"), true);
   assert.equal(isPrivateNetworkUrl("http://172.32.0.1:11434/v1"), false);
   assert.equal(isPrivateNetworkUrl("https://models.example.com/v1"), false);
+  assert.equal(isKeylessModelUrlAllowed("https://first-model.ngrok.app/v1", "https://first-model.ngrok.app"), true);
+  assert.equal(isKeylessModelUrlAllowed("https://first-model.ngrok.app/v1", "https://other-model.ngrok.app"), false);
+  assert.equal(isKeylessModelUrlAllowed("http://first-model.ngrok.app/v1", "http://first-model.ngrok.app"), false);
+  assert.equal(isKeylessModelUrlAllowed("https://first-model.ngrok.app/v1", "not-a-url"), false);
   const db = new AppDatabase(":memory:");
   const local = db.addAgent({
     roomId: "room-studio",
@@ -72,6 +76,25 @@ test("loopback and private LAN endpoints can be keyless while public endpoints r
     createdBy: "user-sam"
   });
   assert.equal(lan.configured, true);
+  const previousOrigins = process.env.KEYLESS_MODEL_ORIGINS;
+  process.env.KEYLESS_MODEL_ORIGINS = "https://first-model.ngrok.app";
+  try {
+    const tunnel = db.addAgent({
+      roomId: "room-studio",
+      username: "ai-tunnel-test",
+      displayName: "Tunnel test",
+      provider: "openai",
+      baseUrl: "https://first-model.ngrok.app/v1",
+      model: "fixture",
+      apiKeyEnv: "",
+      systemPrompt: "",
+      createdBy: "user-sam"
+    });
+    assert.equal(tunnel.configured, true);
+  } finally {
+    if (previousOrigins === undefined) delete process.env.KEYLESS_MODEL_ORIGINS;
+    else process.env.KEYLESS_MODEL_ORIGINS = previousOrigins;
+  }
   assert.throws(() => db.addAgent({
     roomId: "room-studio",
     username: "ai-remote-test",

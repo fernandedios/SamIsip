@@ -17,6 +17,13 @@ const relativeTime = (value: string | null) => {
 };
 
 const initials = (value: string) => value.split(/[\s-]+/).map((part) => part[0]).join("").slice(0, 2).toUpperCase();
+const endpointHost = (value: string) => {
+  try {
+    return new URL(value).host;
+  } catch {
+    return value;
+  }
+};
 
 function Icon({ name, size = 18 }: { name: "plus" | "send" | "menu" | "users" | "close" | "info" | "chevron"; size?: number }) {
   const paths: Record<typeof name, ReactNode> = {
@@ -107,6 +114,7 @@ function AgentModal({ roomId, user, onClose, onCreated }: { roomId: string; user
     apiKeyEnv: "OPENAI_API_KEY", systemPrompt: ""
   });
   const [busy, setBusy] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
   const changeProvider = (value: "openai" | "anthropic") => {
     setProvider(value);
     setForm((current) => ({
@@ -131,18 +139,21 @@ function AgentModal({ roomId, user, onClose, onCreated }: { roomId: string; user
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     setBusy(true);
+    setFormError(null);
     try {
       const agent = await api<Agent>(`/api/rooms/${roomId}/agents`, {
         method: "POST", body: JSON.stringify({ ...form, provider, userId: user.id })
       });
       onCreated(agent);
+    } catch (caught) {
+      setFormError(caught instanceof Error ? caught.message : "The model could not be added.");
     } finally {
       setBusy(false);
     }
   };
   return (
     <Modal title="Add an AI collaborator" onClose={onClose}>
-      <p className="mt-2 text-sm text-muted">Use an OpenAI-compatible or Anthropic-compatible endpoint. Keys stay server-side; loopback and private LAN endpoints can be keyless.</p>
+      <p className="mt-2 text-sm text-muted">Add this form once per model. Mix OpenAI, Anthropic, LAN model servers, and HTTPS tunnel endpoints in the same room; keys stay server-side.</p>
       <button type="button" className="text-button mt-3" onClick={useLocalFixture}>Fill local test model</button>
       <form className="mt-6 grid gap-4" onSubmit={(event) => void submit(event)}>
         <div className="grid grid-cols-2 gap-3">
@@ -150,12 +161,13 @@ function AgentModal({ roomId, user, onClose, onCreated }: { roomId: string; user
           <label className="field-label">Display name<input required value={form.displayName} onChange={(event) => update("displayName", event.target.value)} placeholder="Researcher" /></label>
         </div>
         <label className="field-label">Username<input required pattern="ai-[a-z0-9-]+" value={form.username} onChange={(event) => update("username", event.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ""))} /></label>
-        <label className="field-label">Base URL<input required type="url" value={form.baseUrl} onChange={(event) => update("baseUrl", event.target.value)} /></label>
+        <label className="field-label">Base URL<input required type="url" value={form.baseUrl} onChange={(event) => update("baseUrl", event.target.value)} placeholder="http://192.168.1.42:11434/v1 or https://model.example/v1" /></label>
         <div className="grid grid-cols-2 gap-3">
           <label className="field-label">Model<input required value={form.model} onChange={(event) => update("model", event.target.value)} /></label>
-          <label className="field-label">Key env (optional locally)<input pattern="[A-Z][A-Z0-9_]*" value={form.apiKeyEnv} onChange={(event) => update("apiKeyEnv", event.target.value.toUpperCase())} placeholder="Leave blank for local or LAN" /></label>
+          <label className="field-label">Key env<input pattern="[A-Z][A-Z0-9_]*" value={form.apiKeyEnv} onChange={(event) => update("apiKeyEnv", event.target.value.toUpperCase())} placeholder="Optional for LAN or allowlisted tunnel" /></label>
         </div>
         <label className="field-label">Role prompt<textarea rows={4} value={form.systemPrompt} onChange={(event) => update("systemPrompt", event.target.value)} placeholder="What perspective should this collaborator bring?" /></label>
+        {formError && <p className="summary-error" role="alert">{formError}</p>}
         <div className="flex justify-end gap-2"><button type="button" className="secondary-button" onClick={onClose}>Cancel</button><button className="primary-button" disabled={busy}>{busy ? "Adding…" : "Add collaborator"}</button></div>
       </form>
     </Modal>
@@ -303,8 +315,8 @@ function DetailsPanel({ snapshot, onAddAgent, onSaveBrief, onDownloadSummary, op
           {snapshot.agents.map((agent) => (
             <div className="collaborator-row" key={agent.id}>
               <span className="avatar avatar-agent">{initials(agent.displayName)}</span>
-              <span className="min-w-0 flex-1"><span className="block truncate text-sm font-medium">{agent.displayName}</span><span className="block truncate text-xs text-muted">@{agent.username} · {agent.model}</span></span>
-              <span className={`status-dot ${agent.configured ? "status-ready" : "status-missing"}`} title={agent.configured ? "Ready" : `Missing ${agent.apiKeyEnv}`} />
+              <span className="min-w-0 flex-1"><span className="block truncate text-sm font-medium">{agent.displayName}</span><span className="block truncate text-xs text-muted">@{agent.username} · {agent.model} · {endpointHost(agent.baseUrl)}</span></span>
+              <span className={`status-dot ${agent.configured ? "status-ready" : "status-missing"}`} title={agent.configured ? "Ready" : agent.apiKeyEnv ? `Missing ${agent.apiKeyEnv}` : "Tunnel origin is not allowed by the server"} />
             </div>
           ))}
         </div>

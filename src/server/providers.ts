@@ -1,5 +1,5 @@
 import type { Agent, ContextPlan, Message, Room } from "./types.js";
-import { isPrivateNetworkUrl } from "./network.js";
+import { isKeylessModelUrlAllowed } from "./network.js";
 
 interface OpenAIResponse {
   choices?: Array<{ message?: { content?: string | Array<{ type?: string; text?: string }> } }>;
@@ -117,7 +117,9 @@ export class ProviderClient {
 
   private resolveKey(agent: Agent): string | undefined {
     if (!agent.apiKeyEnv) {
-      if (!isPrivateNetworkUrl(agent.baseUrl)) throw new Error("An API key environment variable is required for model URLs outside loopback and private LAN ranges.");
+      if (!isKeylessModelUrlAllowed(agent.baseUrl)) {
+        throw new Error("An API key environment variable is required for this model URL. Keyless public tunnel origins must be listed in KEYLESS_MODEL_ORIGINS.");
+      }
       return undefined;
     }
     const key = process.env[agent.apiKeyEnv];

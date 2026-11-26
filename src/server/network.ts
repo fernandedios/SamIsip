@@ -35,6 +35,28 @@ export const isPrivateNetworkUrl = (value: string): boolean => {
   return /^f[cd][0-9a-f]{2}:/i.test(hostname);
 };
 
+export const isKeylessModelUrlAllowed = (
+  value: string,
+  configured = process.env.KEYLESS_MODEL_ORIGINS ?? ""
+): boolean => {
+  if (isPrivateNetworkUrl(value)) return true;
+  let candidate: URL;
+  try {
+    candidate = new URL(value);
+  } catch {
+    return false;
+  }
+  if (candidate.protocol !== "https:") return false;
+  return configured.split(",").map((item) => item.trim()).filter(Boolean).some((item) => {
+    try {
+      const allowed = new URL(item);
+      return allowed.protocol === "https:" && allowed.origin === candidate.origin;
+    } catch {
+      return false;
+    }
+  });
+};
+
 export const isCorsOriginAllowed = (origin: string, configured = process.env.CORS_ORIGINS ?? defaultOrigins): boolean => {
   const origins = configured.split(",").map((item) => item.trim().replace(/\/$/, "")).filter(Boolean);
   const cleanOrigin = origin.replace(/\/$/, "");

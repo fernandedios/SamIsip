@@ -12,6 +12,7 @@ import { formatSummaryMarkdown, summaryFileName } from "./summary.js";
 import type { Provider } from "./types.js";
 
 const port = Number(process.env.PORT ?? 8787);
+const host = process.env.SAMISIP_HOST ?? "0.0.0.0";
 const maxContextChars = Number(process.env.MAX_CONTEXT_CHARS ?? 48_000);
 const db = new AppDatabase(process.env.DATABASE_PATH ?? "data/samisip.sqlite");
 const events = new EventHub();
@@ -178,8 +179,10 @@ app.use((error: unknown, _request: express.Request, response: express.Response, 
   response.status(status).json({ error: message });
 });
 
-const server = app.listen(port, () => {
-  console.log(`SamIsip API listening on http://localhost:${port}`);
+const server = app.listen(port, host, () => {
+  const browserHost = host === "0.0.0.0" || host === "::" ? "localhost" : host;
+  const displayHost = browserHost.includes(":") ? `[${browserHost}]` : browserHost;
+  console.log(`SamIsip listening on http://${displayHost}:${port} (bound to ${host})`);
   queue.resume();
 });
 
